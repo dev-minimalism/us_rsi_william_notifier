@@ -1,4 +1,5 @@
 import asyncio
+import os
 import warnings
 from datetime import datetime, time, timedelta
 
@@ -11,6 +12,15 @@ from tech_indicator.indicator import calculate_rsi, calculate_williams_r, \
   generate_signals
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# 로그 디렉토리 생성
+def ensure_log_directory():
+  """로그 디렉토리가 없으면 생성"""
+  log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log')
+  if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+    print(f"Created log directory: {log_dir}")
+  return log_dir
 
 
 def is_us_market_open():
@@ -248,5 +258,8 @@ async def monitor_stocks():
 
 # 비동기 루프 실행
 if __name__ == '__main__':
+  # 로그 디렉토리 확인 및 생성
+  ensure_log_directory()
+
   logger.info("Starting US Stock Market Monitor (Korea Time Zone)")
   asyncio.run(monitor_stocks())
