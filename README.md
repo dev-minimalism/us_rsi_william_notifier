@@ -16,7 +16,7 @@
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python3 us-rsi-william-notifier.py > /dev/null 2>&1 &
+nohup python3 us-rsi-william-notifier.py > /dev/null 2>&1 &
 ```
 
 
