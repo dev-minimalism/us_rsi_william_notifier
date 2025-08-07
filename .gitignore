@@ -1,0 +1,6 @@
+./config/config.py
+.idea
+venv
+.venv
+/output_files/
+/log/
