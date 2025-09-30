@@ -6,8 +6,6 @@ from datetime import datetime, time, timedelta
 
 import pytz
 from yahooquery import Ticker
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
 from logger.logger import logger
 from message.telegram_message import send_telegram_message
@@ -21,20 +19,17 @@ TICKERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tickers
 
 # 기본 티커 리스트
 DEFAULT_TICKERS = [
-  'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
-  'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',  # 6-10위
-  'JPM', 'WMT', 'LLY', 'ORCL', 'V',  # 11-15위
-  'NFLX', 'MA', 'XOM', 'COST', 'JNJ',  # 16-20위
-  'HD', 'PG', 'SAP', 'PLTR', 'BAC',  # 21-25위
-  'ABBV', 'ASML', 'NVO', 'KO', 'GE',  # 26-30위
-  'PM', 'CSCO', 'UNH', 'BABA', 'CVX',  # 31-35위
-  'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',  # 36-40위
-  'NVS', 'ABT', 'MS', 'TM', 'AZN',  # 41-45위
-  'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'  # 46-50위
+    'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
+    'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',   # 6-10위
+    'JPM', 'WMT', 'LLY', 'ORCL', 'V',         # 11-15위
+    'NFLX', 'MA', 'XOM', 'COST', 'JNJ',       # 16-20위
+    'HD', 'PG', 'SAP', 'PLTR', 'BAC',         # 21-25위
+    'ABBV', 'ASML', 'NVO', 'KO', 'GE',        # 26-30위
+    'PM', 'CSCO', 'UNH', 'BABA', 'CVX',       # 31-35위
+    'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',       # 36-40위
+    'NVS', 'ABT', 'MS', 'TM', 'AZN',          # 41-45위
+    'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'        # 46-50위
 ]
-
-# 전역 변수
-current_tickers = []
 
 
 def ensure_log_directory():
@@ -48,138 +43,30 @@ def ensure_log_directory():
 
 def load_tickers():
   """티커 리스트를 파일에서 로드"""
-  global current_tickers
   if os.path.exists(TICKERS_FILE):
     try:
       with open(TICKERS_FILE, 'r') as f:
-        current_tickers = json.load(f)
-      logger.info(f"Loaded {len(current_tickers)} tickers from file")
+        tickers = json.load(f)
+      logger.info(f"📂 Loaded {len(tickers)} tickers from file")
+      return tickers
     except Exception as e:
       logger.error(f"Error loading tickers file: {e}")
-      current_tickers = DEFAULT_TICKERS.copy()
+      return DEFAULT_TICKERS.copy()
   else:
-    current_tickers = DEFAULT_TICKERS.copy()
-    save_tickers()
-  return current_tickers
+    # 파일이 없으면 기본 티커로 생성
+    save_tickers(DEFAULT_TICKERS)
+    logger.info(f"📂 Created new tickers file with {len(DEFAULT_TICKERS)} default tickers")
+    return DEFAULT_TICKERS.copy()
 
 
-def save_tickers():
+def save_tickers(tickers):
   """티커 리스트를 파일에 저장"""
   try:
     with open(TICKERS_FILE, 'w') as f:
-      json.dump(current_tickers, f, indent=2)
-    logger.info(f"Saved {len(current_tickers)} tickers to file")
+      json.dump(tickers, f, indent=2)
+    logger.info(f"💾 Saved {len(tickers)} tickers to file")
   except Exception as e:
     logger.error(f"Error saving tickers file: {e}")
-
-
-async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """티커 추가 명령어 처리"""
-  global current_tickers
-
-  if not context.args:
-    await update.message.reply_text("❌ Usage: /add TICKER\nExample: /add TSLA")
-    return
-
-  ticker = context.args[0].upper()
-
-  if ticker in current_tickers:
-    await update.message.reply_text(f"ℹ️ {ticker} is already in the monitoring list")
-    return
-
-  # 티커 유효성 검증
-  try:
-    test_ticker = Ticker(ticker)
-    test_data = test_ticker.history(period='5d', interval='1d')
-
-    if test_data.empty:
-      await update.message.reply_text(f"❌ {ticker} is not a valid ticker or has no data")
-      return
-
-    current_tickers.append(ticker)
-    save_tickers()
-
-    message = f"✅ {ticker} added to monitoring list\n📊 Total tickers: {len(current_tickers)}"
-    await update.message.reply_text(message)
-    logger.info(f"Ticker {ticker} added. Total: {len(current_tickers)}")
-
-  except Exception as e:
-    await update.message.reply_text(f"❌ Error adding {ticker}: {str(e)}")
-    logger.error(f"Error adding ticker {ticker}: {e}")
-
-
-async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """티커 삭제 명령어 처리"""
-  global current_tickers
-
-  if not context.args:
-    await update.message.reply_text("❌ Usage: /remove TICKER\nExample: /remove TSLA")
-    return
-
-  ticker = context.args[0].upper()
-
-  if ticker not in current_tickers:
-    await update.message.reply_text(f"ℹ️ {ticker} is not in the monitoring list")
-    return
-
-  current_tickers.remove(ticker)
-  save_tickers()
-
-  message = f"✅ {ticker} removed from monitoring list\n📊 Total tickers: {len(current_tickers)}"
-  await update.message.reply_text(message)
-  logger.info(f"Ticker {ticker} removed. Total: {len(current_tickers)}")
-
-
-async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """현재 모니터링 중인 티커 목록 표시"""
-  if not current_tickers:
-    await update.message.reply_text("📭 No tickers in monitoring list")
-    return
-
-  # 10개씩 나누어 표시
-  message = f"📊 Monitoring {len(current_tickers)} tickers:\n\n"
-  for i, ticker in enumerate(current_tickers, 1):
-    message += f"{i}. {ticker}\n"
-    if i % 30 == 0 and i < len(current_tickers):
-      await update.message.reply_text(message)
-      message = ""
-
-  if message:
-    await update.message.reply_text(message)
-
-
-async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """티커 리스트를 기본값으로 리셋"""
-  global current_tickers
-  current_tickers = DEFAULT_TICKERS.copy()
-  save_tickers()
-
-  message = f"🔄 Ticker list reset to default\n📊 Total tickers: {len(current_tickers)}"
-  await update.message.reply_text(message)
-  logger.info(f"Ticker list reset to default ({len(current_tickers)} tickers)")
-
-
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """도움말 표시"""
-  help_text = """
-📖 Available Commands:
-
-/add TICKER - Add a ticker to monitoring list
-  Example: /add TSLA
-
-/remove TICKER - Remove a ticker from list
-  Example: /remove TSLA
-
-/list - Show all monitored tickers
-
-/reset - Reset to default ticker list
-
-/help - Show this help message
-
-Bot monitors stocks for RSI and Williams %R signals
-Signals are sent automatically every hour during market hours
-"""
-  await update.message.reply_text(help_text)
 
 
 def is_us_market_open():
@@ -249,38 +136,47 @@ async def send_heartbeat(counter, market_status="CLOSED"):
 async def monitor_stocks():
   """주식 모니터링 메인 루프"""
   period = 14
-  check_interval = 3600  # 1시간
+  check_interval = 3600  # 1시간 (3600초)
   last_alert = {}
   heartbeat_counter = 0
 
-  is_trading, time_info, market_status = is_us_market_open()
-  start_message = f"🚀 Trading bot started with {len(current_tickers)} tickers!\n{time_info}\n\n💡 Use /help to see available commands"
+  # 초기 티커 로드
+  tickers = load_tickers()
 
-  logger.info(f"Trading bot started with {len(current_tickers)} tickers")
+  is_trading, time_info, market_status = is_us_market_open()
+  start_message = (
+    f"🚀 Trading bot with RSI and Williams %R started!\n"
+    f"📊 Monitoring {len(tickers)} tickers\n"
+    f"{time_info}\n\n"
+    f"💡 Tip: Use ticker_manager.py to add/remove tickers"
+  )
+
+  logger.info(f"Trading bot started with {len(tickers)} tickers")
   await send_telegram_message(start_message)
 
   while True:
     try:
       heartbeat_counter += 1
 
+      # 매 루프마다 티커 리스트를 다시 로드 (실시간 변경 반영)
+      tickers = load_tickers()
+
       is_trading, time_info, market_status = is_us_market_open()
       logger.info(f"Market status check: {time_info}")
 
-      # 현재 모니터링 중인 티커 가져오기
-      tickers = current_tickers.copy()
-
       if not tickers:
-        logger.warning("No tickers to monitor")
+        logger.warning("⚠️ No tickers to monitor!")
         await send_heartbeat(heartbeat_counter, market_status)
         await asyncio.sleep(check_interval)
         continue
 
       if is_trading:
-        logger.info(f"Market is active ({market_status}) - Analyzing {len(tickers)} stocks...")
+        logger.info(f"Market is active ({market_status}) - Starting stock analysis for {len(tickers)} tickers...")
 
         if market_status in ["PREMARKET", "AFTERHOURS"]:
           logger.info(f"Note: {market_status} data may have limitations")
 
+        # 한 번에 모든 종목 가져오기
         tickers_obj = Ticker(tickers)
         df = tickers_obj.history(period='3mo', interval='1d')
 
@@ -293,6 +189,7 @@ async def monitor_stocks():
         analyzed_count = 0
         signal_count = 0
 
+        # 종목별로 데이터 분리
         for stock_ticker in tickers:
           try:
             stock_data = df[df.index.get_level_values(0) == stock_ticker].copy()
@@ -301,20 +198,24 @@ async def monitor_stocks():
               logger.warning(f"No data available for {stock_ticker}.")
               continue
 
+            # 인덱스 정리
             stock_data.reset_index(inplace=True)
             stock_data.set_index('date', inplace=True)
 
+            # 지표 계산
             stock_data['Williams %R'] = calculate_williams_r(stock_data, period)
             stock_data['RSI'] = calculate_rsi(stock_data, period)
 
+            # 데이터 유효성 확인
             if stock_data[['Williams %R', 'RSI']].isna().all(axis=None):
               logger.warning(f"{stock_ticker}: Indicator data is not valid.")
               continue
 
             analyzed_count += 1
 
+            # 신호 생성
             buy_signals, sell_signals = generate_signals(
-              stock_data['Williams %R'], stock_data['RSI']
+                stock_data['Williams %R'], stock_data['RSI']
             )
 
             latest_date = stock_data.index[-1]
@@ -322,6 +223,7 @@ async def monitor_stocks():
             rsi_value = stock_data.loc[latest_date, 'RSI']
             close_price = stock_data.loc[latest_date, 'close']
 
+            # 매수 알림 - 시장 상태 표시 추가
             if buy_signals.iloc[-1] and last_alert.get(stock_ticker) != 'buy':
               message = (
                 f"🟢 [BUY SIGNAL] {stock_ticker} ({market_status})\n"
@@ -335,6 +237,7 @@ async def monitor_stocks():
               last_alert[stock_ticker] = 'buy'
               signal_count += 1
 
+            # 매도 알림 - 시장 상태 표시 추가
             if sell_signals.iloc[-1] and last_alert.get(stock_ticker) != 'sell':
               message = (
                 f"🔴 [SELL SIGNAL] {stock_ticker} ({market_status})\n"
@@ -351,13 +254,17 @@ async def monitor_stocks():
           except Exception as e:
             logger.error(f"Error processing {stock_ticker}: {e}")
 
-        logger.info(
-          f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
+        # 분석 완료 로그
+        logger.info(f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
+
+        # 분석 완료 후 로그만 기록
         logger.info(f"Stock analysis completed for heartbeat #{heartbeat_counter}")
 
       else:
+        # 시장이 닫힌 상태
         logger.info(f"Market is closed ({market_status}) - Standby mode")
 
+      # 마켓 상태에 상관없이 무조건 1시간마다 heartbeat 전송
       if is_trading:
         status_emoji = {
           "PREMARKET": "🟡",
@@ -386,69 +293,16 @@ async def monitor_stocks():
       except:
         pass
 
+    # 1시간 대기
     next_check_time = (datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')
     logger.info(f"Waiting 1 hour until next check... (Next check: {next_check_time})")
     await asyncio.sleep(check_interval)
 
 
-async def run_telegram_bot():
-  """텔레그램 봇 실행"""
-  # 환경 변수에서 봇 토큰 가져오기
-  bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-
-  if not bot_token:
-    logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
-    return
-
-  app = Application.builder().token(bot_token).build()
-
-  # 명령어 핸들러 등록
-  app.add_handler(CommandHandler("add", cmd_add))
-  app.add_handler(CommandHandler("remove", cmd_remove))
-  app.add_handler(CommandHandler("list", cmd_list))
-  app.add_handler(CommandHandler("reset", cmd_reset))
-  app.add_handler(CommandHandler("help", cmd_help))
-
-  logger.info("Telegram bot handlers registered")
-
-  # 봇 시작
-  await app.initialize()
-  await app.start()
-  await app.updater.start_polling()
-
-  logger.info("Telegram bot started and listening for commands")
-
-  # 봇을 계속 실행 상태로 유지
-  try:
-    while True:
-      await asyncio.sleep(1)
-  except asyncio.CancelledError:
-    await app.updater.stop()
-    await app.stop()
-    await app.shutdown()
-
-
-async def main():
-  """메인 실행 함수"""
+# 비동기 루프 실행
+if __name__ == '__main__':
   # 로그 디렉토리 확인 및 생성
   ensure_log_directory()
 
-  # 티커 리스트 로드
-  load_tickers()
-
-  logger.info("Starting US Stock Market Monitor with Dynamic Ticker Management")
-
-  # 모니터링과 텔레그램 봇을 병렬로 실행
-  await asyncio.gather(
-    monitor_stocks(),
-    run_telegram_bot()
-  )
-
-
-if __name__ == '__main__':
-  try:
-    asyncio.run(main())
-  except KeyboardInterrupt:
-    logger.info("Bot stopped by user")
-  except Exception as e:
-    logger.error(f"Fatal error: {e}")
+  logger.info("Starting US Stock Market Monitor (Korea Time Zone)")
+  asyncio.run(monitor_stocks())
