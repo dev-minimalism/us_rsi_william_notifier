@@ -19,16 +19,16 @@ TICKERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tickers
 
 # 기본 티커 리스트
 DEFAULT_TICKERS = [
-    'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
-    'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',   # 6-10위
-    'JPM', 'WMT', 'LLY', 'ORCL', 'V',         # 11-15위
-    'NFLX', 'MA', 'XOM', 'COST', 'JNJ',       # 16-20위
-    'HD', 'PG', 'SAP', 'PLTR', 'BAC',         # 21-25위
-    'ABBV', 'ASML', 'NVO', 'KO', 'GE',        # 26-30위
-    'PM', 'CSCO', 'UNH', 'BABA', 'CVX',       # 31-35위
-    'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',       # 36-40위
-    'NVS', 'ABT', 'MS', 'TM', 'AZN',          # 41-45위
-    'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'        # 46-50위
+  'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
+  'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',  # 6-10위
+  'JPM', 'WMT', 'LLY', 'ORCL', 'V',  # 11-15위
+  'NFLX', 'MA', 'XOM', 'COST', 'JNJ',  # 16-20위
+  'HD', 'PG', 'SAP', 'PLTR', 'BAC',  # 21-25위
+  'ABBV', 'ASML', 'NVO', 'KO', 'GE',  # 26-30위
+  'PM', 'CSCO', 'UNH', 'BABA', 'CVX',  # 31-35위
+  'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',  # 36-40위
+  'NVS', 'ABT', 'MS', 'TM', 'AZN',  # 41-45위
+  'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'  # 46-50위
 ]
 
 
@@ -136,9 +136,11 @@ async def send_heartbeat(counter, market_status="CLOSED"):
 async def monitor_stocks():
   """주식 모니터링 메인 루프"""
   period = 14
-  check_interval = 3600  # 1시간 (3600초)
+  check_interval = 1800  # 30분 (1800초) - 분석 주기
+  heartbeat_interval = 6  # 6시간마다 heartbeat (30분 × 12 = 6시간)
   last_alert = {}
   heartbeat_counter = 0
+  cycle_counter = 0  # 사이클 카운터
 
   # 초기 티커 로드
   tickers = load_tickers()
@@ -147,6 +149,8 @@ async def monitor_stocks():
   start_message = (
     f"🚀 Trading bot with RSI and Williams %R started!\n"
     f"📊 Monitoring {len(tickers)} tickers\n"
+    f"⏱️ Analysis: Every 30 minutes\n"
+    f"💓 Heartbeat: Every 6 hours\n"
     f"{time_info}\n\n"
     f"💡 Tip: Use ticker_manager.py to add/remove tickers"
   )
@@ -156,17 +160,24 @@ async def monitor_stocks():
 
   while True:
     try:
-      heartbeat_counter += 1
+      cycle_counter += 1
+
+      # 6시간마다 heartbeat 전송 (30분 × 12 = 6시간)
+      should_send_heartbeat = (cycle_counter % (heartbeat_interval * 2) == 1)
+
+      if should_send_heartbeat:
+        heartbeat_counter += 1
 
       # 매 루프마다 티커 리스트를 다시 로드 (실시간 변경 반영)
       tickers = load_tickers()
 
       is_trading, time_info, market_status = is_us_market_open()
-      logger.info(f"Market status check: {time_info}")
+      logger.info(f"[Cycle {cycle_counter}] Market status check: {time_info}")
 
       if not tickers:
         logger.warning("⚠️ No tickers to monitor!")
-        await send_heartbeat(heartbeat_counter, market_status)
+        if should_send_heartbeat:
+          await send_heartbeat(heartbeat_counter, market_status)
         await asyncio.sleep(check_interval)
         continue
 
@@ -215,7 +226,7 @@ async def monitor_stocks():
 
             # 신호 생성
             buy_signals, sell_signals = generate_signals(
-                stock_data['Williams %R'], stock_data['RSI']
+              stock_data['Williams %R'], stock_data['RSI']
             )
 
             latest_date = stock_data.index[-1]
@@ -255,47 +266,51 @@ async def monitor_stocks():
             logger.error(f"Error processing {stock_ticker}: {e}")
 
         # 분석 완료 로그
-        logger.info(f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
-
-        # 분석 완료 후 로그만 기록
-        logger.info(f"Stock analysis completed for heartbeat #{heartbeat_counter}")
+        logger.info(
+          f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
+        logger.info(f"Stock analysis completed for cycle #{cycle_counter}")
 
       else:
         # 시장이 닫힌 상태
         logger.info(f"Market is closed ({market_status}) - Standby mode")
 
-      # 마켓 상태에 상관없이 무조건 1시간마다 heartbeat 전송
-      if is_trading:
-        status_emoji = {
-          "PREMARKET": "🟡",
-          "REGULAR": "✅",
-          "AFTERHOURS": "🟠"
-        }
-        emoji = status_emoji.get(market_status, "✅")
+      # Heartbeat 전송 (6시간마다만)
+      if should_send_heartbeat:
+        if is_trading:
+          status_emoji = {
+            "PREMARKET": "🟡",
+            "REGULAR": "✅",
+            "AFTERHOURS": "🟠"
+          }
+          emoji = status_emoji.get(market_status, "✅")
 
-        enhanced_heartbeat = (
-          f"{emoji} Heartbeat #{heartbeat_counter}: {market_status}\n"
-          f"📊 Monitoring: {len(tickers)} tickers\n"
-          f"✓ Analyzed: {analyzed_count if 'analyzed_count' in locals() else 0}/{len(tickers)} stocks\n"
-          f"🎯 Signals: {signal_count if 'signal_count' in locals() else 0} generated\n"
-          f"{time_info}"
-        )
-        await send_telegram_message(enhanced_heartbeat)
-        logger.info(f"Enhanced heartbeat #{heartbeat_counter} sent - Status: {market_status}")
+          enhanced_heartbeat = (
+            f"{emoji} Heartbeat #{heartbeat_counter}: {market_status}\n"
+            f"⏱️ Cycles: {cycle_counter} (every 30min)\n"
+            f"📊 Monitoring: {len(tickers)} tickers\n"
+            f"✓ Analyzed: {analyzed_count if 'analyzed_count' in locals() else 0}/{len(tickers)} stocks\n"
+            f"🎯 Signals: {signal_count if 'signal_count' in locals() else 0} generated\n"
+            f"{time_info}"
+          )
+          await send_telegram_message(enhanced_heartbeat)
+          logger.info(f"Enhanced heartbeat #{heartbeat_counter} sent - Status: {market_status}")
+        else:
+          await send_heartbeat(heartbeat_counter, market_status)
       else:
-        await send_heartbeat(heartbeat_counter, market_status)
+        logger.info(
+          f"Heartbeat skipped (next heartbeat in {(heartbeat_interval * 2) - (cycle_counter % (heartbeat_interval * 2))} cycles)")
 
     except Exception as e:
       logger.error(f"Error in main loop: {e}")
-      error_message = f"❌ Error in monitoring loop #{heartbeat_counter}: {str(e)}"
+      error_message = f"❌ Error in monitoring loop (cycle #{cycle_counter}): {str(e)}"
       try:
         await send_telegram_message(error_message)
       except:
         pass
 
-    # 1시간 대기
+    # 30분 대기
     next_check_time = (datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')
-    logger.info(f"Waiting 1 hour until next check... (Next check: {next_check_time})")
+    logger.info(f"Waiting 30 minutes until next check... (Next check: {next_check_time})")
     await asyncio.sleep(check_interval)
 
 
