@@ -148,7 +148,9 @@ async def perform_stock_scan(period=14, source="manual"):
       'success': False,
       'message': "❌ No tickers configured to scan",
       'analyzed': 0,
-      'signals': 0
+      'signals': 0,
+      'total_tickers': 0,
+      'market_status': 'UNKNOWN'
     }
 
   is_trading, time_info, market_status = is_us_market_open()
@@ -167,6 +169,7 @@ async def perform_stock_scan(period=14, source="manual"):
         'message': "❌ No market data available",
         'analyzed': 0,
         'signals': 0,
+        'total_tickers': len(tickers),
         'market_status': market_status
       }
 
@@ -256,7 +259,9 @@ async def perform_stock_scan(period=14, source="manual"):
       'success': False,
       'message': f"❌ Error during scan: {str(e)}",
       'analyzed': 0,
-      'signals': 0
+      'signals': 0,
+      'total_tickers': len(tickers) if tickers else 0,
+      'market_status': 'ERROR'
     }
 
 
@@ -272,13 +277,13 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   result = await perform_stock_scan(source="manual")
 
   # 결과 메시지 생성
-  if result['success']:
+  if result.get('success'):
     summary_message = (
       f"✅ Manual scan completed!\n\n"
-      f"📊 Market: {result['market_status']}\n"
-      f"✔️ Analyzed: {result['analyzed']}/{result['total_tickers']} stocks\n"
-      f"🎯 Signals found: {result['signals']}\n\n"
-      f"{result['time_info']}"
+      f"📊 Market: {result.get('market_status', 'UNKNOWN')}\n"
+      f"✔️ Analyzed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} stocks\n"
+      f"🎯 Signals found: {result.get('signals', 0)}\n\n"
+      f"{result.get('time_info', '')}"
     )
   else:
     summary_message = result.get('message', '❌ Scan failed')
@@ -371,16 +376,18 @@ async def monitor_stocks():
 
         if result['success']:
           logger.info(
-            f"Auto scan completed: {result['analyzed']}/{result['total_tickers']} analyzed, "
-            f"{result['signals']} signals"
+            f"Auto scan completed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} analyzed, "
+            f"{result.get('signals', 0)} signals"
           )
+        else:
+          logger.warning(f"Auto scan failed: {result.get('message', 'Unknown error')}")
 
       else:
         logger.info(f"Market is closed ({market_status}) - Standby mode")
 
       # Heartbeat 전송
       if should_send_heartbeat:
-        if is_trading and 'result' in locals():
+        if is_trading and 'result' in locals() and result:
           status_emoji = {
             "PREMARKET": "🟡",
             "REGULAR": "✅",
@@ -392,8 +399,8 @@ async def monitor_stocks():
             f"{emoji} Heartbeat #{heartbeat_counter}: {market_status}\n"
             f"⏱️ Cycles: {cycle_counter} (every 30min)\n"
             f"📊 Monitoring: {len(load_tickers())} tickers\n"
-            f"✔️ Analyzed: {result['analyzed']}/{result['total_tickers']} stocks\n"
-            f"🎯 Signals: {result['signals']} generated\n"
+            f"✔️ Analyzed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} stocks\n"
+            f"🎯 Signals: {result.get('signals', 0)} generated\n"
             f"{time_info}"
           )
           await send_telegram_message(enhanced_heartbeat)
