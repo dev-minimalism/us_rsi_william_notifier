@@ -6,19 +6,14 @@ from datetime import datetime, time, timedelta
 
 import pytz
 from yahooquery import Ticker
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
 from logger.logger import logger
 from message.telegram_message import send_telegram_message
 from tech_indicator.indicator import calculate_rsi, calculate_williams_r, \
   generate_signals
+from stock_scanner import scan_stocks, format_signal_message
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# 환경 변수에서 텔레그램 토큰 가져오기
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # 티커 리스트 파일 경로
 TICKERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tickers.json')
@@ -59,6 +54,7 @@ def load_tickers():
       logger.error(f"Error loading tickers file: {e}")
       return DEFAULT_TICKERS.copy()
   else:
+    # 파일이 없으면 기본 티커로 생성
     save_tickers(DEFAULT_TICKERS)
     logger.info(f"📂 Created new tickers file with {len(DEFAULT_TICKERS)} default tickers")
     return DEFAULT_TICKERS.copy()
@@ -127,7 +123,7 @@ async def send_heartbeat(counter, market_status="CLOSED"):
   elif status == "AFTERHOURS":
     heartbeat_msg = f"🟠 Heartbeat #{counter}: AFTERHOURS - Monitoring active\n{time_info}"
   elif status == "WEEKEND":
-    heartbeat_msg = f"🖐️ Heartbeat #{counter}: WEEKEND - Standby mode\n{time_info}"
+    heartbeat_msg = f"🏖️ Heartbeat #{counter}: WEEKEND - Standby mode\n{time_info}"
   else:
     heartbeat_msg = f"💤 Heartbeat #{counter}: MARKET CLOSED - Standby mode\n{time_info}"
 
@@ -138,220 +134,26 @@ async def send_heartbeat(counter, market_status="CLOSED"):
     logger.error(f"Failed to send heartbeat #{counter}: {e}")
 
 
-async def perform_stock_scan(period=14, source="manual"):
-  """주식 스캔 실행 (수동/자동 모두 사용)"""
-  tickers = load_tickers()
-
-  if not tickers:
-    logger.warning("⚠️ No tickers to monitor!")
-    return {
-      'success': False,
-      'message': "❌ No tickers configured to scan",
-      'analyzed': 0,
-      'signals': 0,
-      'total_tickers': 0,
-      'market_status': 'UNKNOWN'
-    }
-
-  is_trading, time_info, market_status = is_us_market_open()
-
-  logger.info(f"[{source.upper()}] Starting scan for {len(tickers)} tickers - {market_status}")
-
-  try:
-    # 한 번에 모든 종목 가져오기
-    tickers_obj = Ticker(tickers)
-    df = tickers_obj.history(period='3mo', interval='1d')
-
-    if df.empty:
-      logger.warning("No data returned for any ticker.")
-      return {
-        'success': False,
-        'message': "❌ No market data available",
-        'analyzed': 0,
-        'signals': 0,
-        'total_tickers': len(tickers),
-        'market_status': market_status
-      }
-
-    analyzed_count = 0
-    signal_count = 0
-    last_alert = {}  # 스캔마다 초기화
-
-    # 종목별로 데이터 분리
-    for stock_ticker in tickers:
-      try:
-        stock_data = df[df.index.get_level_values(0) == stock_ticker].copy()
-
-        if stock_data.empty:
-          logger.warning(f"No data available for {stock_ticker}.")
-          continue
-
-        # 인덱스 정리
-        stock_data.reset_index(inplace=True)
-        stock_data.set_index('date', inplace=True)
-
-        # 지표 계산
-        stock_data['Williams %R'] = calculate_williams_r(stock_data, period)
-        stock_data['RSI'] = calculate_rsi(stock_data, period)
-
-        # 데이터 유효성 확인
-        if stock_data[['Williams %R', 'RSI']].isna().all(axis=None):
-          logger.warning(f"{stock_ticker}: Indicator data is not valid.")
-          continue
-
-        analyzed_count += 1
-
-        # 신호 생성
-        buy_signals, sell_signals = generate_signals(
-          stock_data['Williams %R'], stock_data['RSI']
-        )
-
-        latest_date = stock_data.index[-1]
-        williams_r_value = stock_data.loc[latest_date, 'Williams %R']
-        rsi_value = stock_data.loc[latest_date, 'RSI']
-        close_price = stock_data.loc[latest_date, 'close']
-
-        # 매수 알림
-        if buy_signals.iloc[-1]:
-          scan_tag = "🔍 MANUAL SCAN" if source == "manual" else "🤖 AUTO SCAN"
-          message = (
-            f"🟢 [BUY SIGNAL] {stock_ticker} ({market_status})\n"
-            f"{scan_tag}\n"
-            f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
-            f"📊 Williams %R: {williams_r_value:.2f}\n"
-            f"📊 RSI: {rsi_value:.2f}\n"
-            f"💰 Price: ${close_price:.2f}"
-          )
-          await send_telegram_message(message)
-          logger.info(f"[{source.upper()}] BUY signal sent for {stock_ticker}")
-          signal_count += 1
-
-        # 매도 알림
-        if sell_signals.iloc[-1]:
-          scan_tag = "🔍 MANUAL SCAN" if source == "manual" else "🤖 AUTO SCAN"
-          message = (
-            f"🔴 [SELL SIGNAL] {stock_ticker} ({market_status})\n"
-            f"{scan_tag}\n"
-            f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
-            f"📊 Williams %R: {williams_r_value:.2f}\n"
-            f"📊 RSI: {rsi_value:.2f}\n"
-            f"💰 Price: ${close_price:.2f}"
-          )
-          await send_telegram_message(message)
-          logger.info(f"[{source.upper()}] SELL signal sent for {stock_ticker}")
-          signal_count += 1
-
-      except Exception as e:
-        logger.error(f"Error processing {stock_ticker}: {e}")
-
-    return {
-      'success': True,
-      'analyzed': analyzed_count,
-      'signals': signal_count,
-      'total_tickers': len(tickers),
-      'market_status': market_status,
-      'time_info': time_info
-    }
-
-  except Exception as e:
-    logger.error(f"Error in stock scan: {e}")
-    return {
-      'success': False,
-      'message': f"❌ Error during scan: {str(e)}",
-      'analyzed': 0,
-      'signals': 0,
-      'total_tickers': len(tickers) if tickers else 0,
-      'market_status': 'ERROR'
-    }
-
-
-# 텔레그램 봇 명령어 핸들러
-async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """텔레그램 /scan 명령어 핸들러"""
-  logger.info(f"Manual scan requested by user {update.effective_user.id}")
-
-  # 스캔 시작 메시지
-  await update.message.reply_text("🔍 Manual scan started...\nAnalyzing stocks now...")
-
-  # 스캔 실행
-  result = await perform_stock_scan(source="manual")
-
-  # 결과 메시지 생성
-  if result.get('success'):
-    summary_message = (
-      f"✅ Manual scan completed!\n\n"
-      f"📊 Market: {result.get('market_status', 'UNKNOWN')}\n"
-      f"✔️ Analyzed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} stocks\n"
-      f"🎯 Signals found: {result.get('signals', 0)}\n\n"
-      f"{result.get('time_info', '')}"
-    )
-  else:
-    summary_message = result.get('message', '❌ Scan failed')
-
-  await update.message.reply_text(summary_message)
-  logger.info(f"Manual scan completed - Signals: {result.get('signals', 0)}")
-
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """텔레그램 /status 명령어 핸들러"""
-  tickers = load_tickers()
-  is_trading, time_info, market_status = is_us_market_open()
-
-  status_message = (
-    f"📊 Bot Status\n\n"
-    f"🔴 Market: {market_status}\n"
-    f"📈 Monitoring: {len(tickers)} tickers\n"
-    f"⏱️ Auto scan: Every 30 minutes\n\n"
-    f"{time_info}\n\n"
-    f"💡 Commands:\n"
-    f"/scan - Run immediate scan\n"
-    f"/status - Show this status"
-  )
-
-  await update.message.reply_text(status_message)
-
-
-async def start_telegram_bot():
-  """텔레그램 봇 시작"""
-  if not TELEGRAM_BOT_TOKEN:
-    logger.error("TELEGRAM_BOT_TOKEN not set!")
-    return
-
-  app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-  # 명령어 핸들러 추가
-  app.add_handler(CommandHandler("scan", scan_command))
-  app.add_handler(CommandHandler("status", status_command))
-
-  logger.info("Telegram bot handlers registered")
-
-  # 봇 시작 (polling)
-  await app.initialize()
-  await app.start()
-  await app.updater.start_polling()
-
-  logger.info("Telegram bot started and listening for commands")
-
-
 async def monitor_stocks():
-  """주식 모니터링 메인 루프 (자동 스캔)"""
-  check_interval = 1800  # 30분 (1800초)
-  heartbeat_interval = 6  # 6시간마다 heartbeat
+  """주식 모니터링 메인 루프"""
+  period = 14
+  check_interval = 1800  # 30분 (1800초) - 분석 주기
+  heartbeat_interval = 6  # 6시간마다 heartbeat (30분 × 12 = 6시간)
+  last_alert = {}
   heartbeat_counter = 0
-  cycle_counter = 0
+  cycle_counter = 0  # 사이클 카운터
 
+  # 초기 티커 로드
   tickers = load_tickers()
-  is_trading, time_info, market_status = is_us_market_open()
 
+  is_trading, time_info, market_status = is_us_market_open()
   start_message = (
     f"🚀 Trading bot with RSI and Williams %R started!\n"
     f"📊 Monitoring {len(tickers)} tickers\n"
-    f"⏱️ Auto scan: Every 30 minutes\n"
-    f"💬 Heartbeat: Every 6 hours\n"
+    f"⏱️ Analysis: Every 30 minutes\n"
+    f"💓 Heartbeat: Every 6 hours\n"
     f"{time_info}\n\n"
-    f"💡 Commands:\n"
-    f"/scan - Run immediate scan\n"
-    f"/status - Check bot status"
+    f"💡 Tip: Use ticker_manager.py to add/remove tickers"
   )
 
   logger.info(f"Trading bot started with {len(tickers)} tickers")
@@ -360,34 +162,122 @@ async def monitor_stocks():
   while True:
     try:
       cycle_counter += 1
+
+      # 6시간마다 heartbeat 전송 (30분 × 12 = 6시간)
       should_send_heartbeat = (cycle_counter % (heartbeat_interval * 2) == 1)
 
       if should_send_heartbeat:
         heartbeat_counter += 1
 
+      # 매 루프마다 티커 리스트를 다시 로드 (실시간 변경 반영)
+      tickers = load_tickers()
+
       is_trading, time_info, market_status = is_us_market_open()
       logger.info(f"[Cycle {cycle_counter}] Market status check: {time_info}")
 
+      if not tickers:
+        logger.warning("⚠️ No tickers to monitor!")
+        if should_send_heartbeat:
+          await send_heartbeat(heartbeat_counter, market_status)
+        await asyncio.sleep(check_interval)
+        continue
+
       if is_trading:
-        logger.info(f"Market is active ({market_status}) - Starting automatic scan...")
+        logger.info(f"Market is active ({market_status}) - Starting stock analysis for {len(tickers)} tickers...")
 
-        # 자동 스캔 실행
-        result = await perform_stock_scan(source="auto")
+        if market_status in ["PREMARKET", "AFTERHOURS"]:
+          logger.info(f"Note: {market_status} data may have limitations")
 
-        if result['success']:
-          logger.info(
-            f"Auto scan completed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} analyzed, "
-            f"{result.get('signals', 0)} signals"
-          )
-        else:
-          logger.warning(f"Auto scan failed: {result.get('message', 'Unknown error')}")
+        # 한 번에 모든 종목 가져오기
+        tickers_obj = Ticker(tickers)
+        df = tickers_obj.history(period='3mo', interval='1d')
+
+        if df.empty:
+          logger.warning("No data returned for any ticker.")
+          await send_heartbeat(heartbeat_counter, market_status)
+          await asyncio.sleep(check_interval)
+          continue
+
+        analyzed_count = 0
+        signal_count = 0
+
+        # 종목별로 데이터 분리
+        for stock_ticker in tickers:
+          try:
+            stock_data = df[df.index.get_level_values(0) == stock_ticker].copy()
+
+            if stock_data.empty:
+              logger.warning(f"No data available for {stock_ticker}.")
+              continue
+
+            # 인덱스 정리
+            stock_data.reset_index(inplace=True)
+            stock_data.set_index('date', inplace=True)
+
+            # 지표 계산
+            stock_data['Williams %R'] = calculate_williams_r(stock_data, period)
+            stock_data['RSI'] = calculate_rsi(stock_data, period)
+
+            # 데이터 유효성 확인
+            if stock_data[['Williams %R', 'RSI']].isna().all(axis=None):
+              logger.warning(f"{stock_ticker}: Indicator data is not valid.")
+              continue
+
+            analyzed_count += 1
+
+            # 신호 생성
+            buy_signals, sell_signals = generate_signals(
+              stock_data['Williams %R'], stock_data['RSI']
+            )
+
+            latest_date = stock_data.index[-1]
+            williams_r_value = stock_data.loc[latest_date, 'Williams %R']
+            rsi_value = stock_data.loc[latest_date, 'RSI']
+            close_price = stock_data.loc[latest_date, 'close']
+
+            # 매수 알림 - 시장 상태 표시 추가
+            if buy_signals.iloc[-1] and last_alert.get(stock_ticker) != 'buy':
+              message = (
+                f"🟢 [BUY SIGNAL] {stock_ticker} ({market_status})\n"
+                f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
+                f"📊 Williams %R: {williams_r_value:.2f}\n"
+                f"📊 RSI: {rsi_value:.2f}\n"
+                f"💰 Price: ${close_price:.2f}"
+              )
+              await send_telegram_message(message)
+              logger.info(f"BUY signal sent for {stock_ticker} during {market_status}")
+              last_alert[stock_ticker] = 'buy'
+              signal_count += 1
+
+            # 매도 알림 - 시장 상태 표시 추가
+            if sell_signals.iloc[-1] and last_alert.get(stock_ticker) != 'sell':
+              message = (
+                f"🔴 [SELL SIGNAL] {stock_ticker} ({market_status})\n"
+                f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
+                f"📊 Williams %R: {williams_r_value:.2f}\n"
+                f"📊 RSI: {rsi_value:.2f}\n"
+                f"💰 Price: ${close_price:.2f}"
+              )
+              await send_telegram_message(message)
+              logger.info(f"SELL signal sent for {stock_ticker} during {market_status}")
+              last_alert[stock_ticker] = 'sell'
+              signal_count += 1
+
+          except Exception as e:
+            logger.error(f"Error processing {stock_ticker}: {e}")
+
+        # 분석 완료 로그
+        logger.info(
+          f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
+        logger.info(f"Stock analysis completed for cycle #{cycle_counter}")
 
       else:
+        # 시장이 닫힌 상태
         logger.info(f"Market is closed ({market_status}) - Standby mode")
 
-      # Heartbeat 전송
+      # Heartbeat 전송 (6시간마다만)
       if should_send_heartbeat:
-        if is_trading and 'result' in locals() and result:
+        if is_trading:
           status_emoji = {
             "PREMARKET": "🟡",
             "REGULAR": "✅",
@@ -398,15 +288,18 @@ async def monitor_stocks():
           enhanced_heartbeat = (
             f"{emoji} Heartbeat #{heartbeat_counter}: {market_status}\n"
             f"⏱️ Cycles: {cycle_counter} (every 30min)\n"
-            f"📊 Monitoring: {len(load_tickers())} tickers\n"
-            f"✔️ Analyzed: {result.get('analyzed', 0)}/{result.get('total_tickers', 0)} stocks\n"
-            f"🎯 Signals: {result.get('signals', 0)} generated\n"
+            f"📊 Monitoring: {len(tickers)} tickers\n"
+            f"✓ Analyzed: {analyzed_count if 'analyzed_count' in locals() else 0}/{len(tickers)} stocks\n"
+            f"🎯 Signals: {signal_count if 'signal_count' in locals() else 0} generated\n"
             f"{time_info}"
           )
           await send_telegram_message(enhanced_heartbeat)
-          logger.info(f"Enhanced heartbeat #{heartbeat_counter} sent")
+          logger.info(f"Enhanced heartbeat #{heartbeat_counter} sent - Status: {market_status}")
         else:
           await send_heartbeat(heartbeat_counter, market_status)
+      else:
+        logger.info(
+          f"Heartbeat skipped (next heartbeat in {(heartbeat_interval * 2) - (cycle_counter % (heartbeat_interval * 2))} cycles)")
 
     except Exception as e:
       logger.error(f"Error in main loop: {e}")
@@ -416,24 +309,16 @@ async def monitor_stocks():
       except:
         pass
 
+    # 30분 대기
     next_check_time = (datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')
-    logger.info(f"Waiting 30 minutes until next check... (Next: {next_check_time})")
+    logger.info(f"Waiting 30 minutes until next check... (Next check: {next_check_time})")
     await asyncio.sleep(check_interval)
 
 
-async def main():
-  """메인 함수 - 봇과 모니터링을 동시 실행"""
-  # 로그 디렉토리 확인
+# 비동기 루프 실행
+if __name__ == '__main__':
+  # 로그 디렉토리 확인 및 생성
   ensure_log_directory()
 
-  logger.info("Starting US Stock Market Monitor with Telegram Bot")
-
-  # 텔레그램 봇과 모니터링을 동시에 실행
-  await asyncio.gather(
-    start_telegram_bot(),
-    monitor_stocks()
-  )
-
-
-if __name__ == '__main__':
-  asyncio.run(main())
+  logger.info("Starting US Stock Market Monitor (Korea Time Zone)")
+  asyncio.run(monitor_stocks())

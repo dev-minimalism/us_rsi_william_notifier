@@ -1,5 +1,4 @@
 [
-  "NVDA",
   "MSFT",
   "AAPL",
   "AMZN",
@@ -48,5 +47,25 @@
   "LIN",
   "HSBC",
   "MCD",
-  "DIS"
+  "DIS",
+  "HOOD",
+  "UMC",
+  "BMNR",
+  "CRCL",
+  "RDDT",
+  "QUBT",
+  "WBTN",
+  "CRWV",
+  "VRT",
+  "LMT",
+  "BLK",
+  "RBLX",
+  "FIG",
+  "SMR",
+  "CPNG",
+  "CRSP",
+  "SSTI",
+  "SOUN",
+  "TLN",
+  "SERV"
 ]
