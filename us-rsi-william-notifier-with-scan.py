@@ -1,7 +1,7 @@
 import asyncio
+import json
 import os
 import warnings
-import json
 from datetime import datetime, time, timedelta
 
 import pytz
@@ -11,12 +11,12 @@ from logger.logger import logger
 from message.telegram_message import send_telegram_message
 from tech_indicator.indicator import calculate_rsi, calculate_williams_r, \
   generate_signals
-from stock_scanner import scan_stocks, format_signal_message
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # 티커 리스트 파일 경로
-TICKERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tickers.json')
+TICKERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'tickers.json')
 
 # 기본 티커 리스트
 DEFAULT_TICKERS = [
@@ -56,7 +56,8 @@ def load_tickers():
   else:
     # 파일이 없으면 기본 티커로 생성
     save_tickers(DEFAULT_TICKERS)
-    logger.info(f"📂 Created new tickers file with {len(DEFAULT_TICKERS)} default tickers")
+    logger.info(
+      f"📂 Created new tickers file with {len(DEFAULT_TICKERS)} default tickers")
     return DEFAULT_TICKERS.copy()
 
 
@@ -134,6 +135,48 @@ async def send_heartbeat(counter, market_status="CLOSED"):
     logger.error(f"Failed to send heartbeat #{counter}: {e}")
 
 
+async def fetch_ticker_data_with_retry(ticker_list, max_retries=3,
+    base_delay=5):
+  """
+  Yahoo Finance API 호출을 재시도 로직과 함께 수행
+
+  Args:
+    ticker_list: 조회할 티커 리스트
+    max_retries: 최대 재시도 횟수
+    base_delay: 기본 대기 시간 (초)
+  """
+  for attempt in range(max_retries):
+    try:
+      logger.info(
+        f"Fetching data for {len(ticker_list)} tickers (attempt {attempt + 1}/{max_retries})")
+      tickers_obj = Ticker(ticker_list)
+      df = tickers_obj.history(period='3mo', interval='1d')
+
+      if not df.empty:
+        logger.info(f"Successfully fetched data for {len(ticker_list)} tickers")
+        return df
+      else:
+        logger.warning(
+          f"Empty dataframe returned (attempt {attempt + 1}/{max_retries})")
+
+    except Exception as e:
+      error_msg = str(e)
+      if '429' in error_msg or 'too many' in error_msg.lower():
+        # 429 에러: Exponential backoff으로 대기
+        wait_time = base_delay * (2 ** attempt)
+        logger.warning(
+          f"Rate limit hit (429 error) on attempt {attempt + 1}. Waiting {wait_time} seconds...")
+        await asyncio.sleep(wait_time)
+      else:
+        logger.error(
+          f"Error fetching data (attempt {attempt + 1}/{max_retries}): {e}")
+        if attempt < max_retries - 1:
+          await asyncio.sleep(base_delay)
+
+  logger.error(f"Failed to fetch data after {max_retries} attempts")
+  return None
+
+
 async def monitor_stocks():
   """주식 모니터링 메인 루프"""
   period = 14
@@ -143,6 +186,10 @@ async def monitor_stocks():
   heartbeat_counter = 0
   cycle_counter = 0  # 사이클 카운터
 
+  # 배치 설정: 티커를 10개씩 배치로 분할
+  batch_size = 10
+  batch_delay = 3  # 각 배치 사이 3초 대기
+
   # 초기 티커 로드
   tickers = load_tickers()
 
@@ -150,6 +197,7 @@ async def monitor_stocks():
   start_message = (
     f"🚀 Trading bot with RSI and Williams %R started!\n"
     f"📊 Monitoring {len(tickers)} tickers\n"
+    f"📦 Processing in batches of {batch_size}\n"
     f"⏱️ Analysis: Every 30 minutes\n"
     f"💓 Heartbeat: Every 6 hours\n"
     f"{time_info}\n\n"
@@ -183,92 +231,113 @@ async def monitor_stocks():
         continue
 
       if is_trading:
-        logger.info(f"Market is active ({market_status}) - Starting stock analysis for {len(tickers)} tickers...")
+        logger.info(
+          f"Market is active ({market_status}) - Starting stock analysis for {len(tickers)} tickers...")
 
         if market_status in ["PREMARKET", "AFTERHOURS"]:
           logger.info(f"Note: {market_status} data may have limitations")
 
-        # 한 번에 모든 종목 가져오기
-        tickers_obj = Ticker(tickers)
-        df = tickers_obj.history(period='3mo', interval='1d')
-
-        if df.empty:
-          logger.warning("No data returned for any ticker.")
-          await send_heartbeat(heartbeat_counter, market_status)
-          await asyncio.sleep(check_interval)
-          continue
-
         analyzed_count = 0
         signal_count = 0
 
-        # 종목별로 데이터 분리
-        for stock_ticker in tickers:
-          try:
-            stock_data = df[df.index.get_level_values(0) == stock_ticker].copy()
+        # 티커를 배치로 분할하여 처리
+        for batch_idx in range(0, len(tickers), batch_size):
+          batch_tickers = tickers[batch_idx:batch_idx + batch_size]
+          batch_num = (batch_idx // batch_size) + 1
+          total_batches = (len(tickers) + batch_size - 1) // batch_size
 
-            if stock_data.empty:
-              logger.warning(f"No data available for {stock_ticker}.")
-              continue
+          logger.info(
+            f"Processing batch {batch_num}/{total_batches}: {batch_tickers}")
 
-            # 인덱스 정리
-            stock_data.reset_index(inplace=True)
-            stock_data.set_index('date', inplace=True)
+          # 재시도 로직과 함께 데이터 가져오기
+          df = await fetch_ticker_data_with_retry(batch_tickers)
 
-            # 지표 계산
-            stock_data['Williams %R'] = calculate_williams_r(stock_data, period)
-            stock_data['RSI'] = calculate_rsi(stock_data, period)
+          if df is None or df.empty:
+            logger.warning(
+              f"No data returned for batch {batch_num}. Skipping to next batch.")
+            # 다음 배치로 계속 진행
+            if batch_idx + batch_size < len(tickers):
+              await asyncio.sleep(batch_delay)
+            continue
 
-            # 데이터 유효성 확인
-            if stock_data[['Williams %R', 'RSI']].isna().all(axis=None):
-              logger.warning(f"{stock_ticker}: Indicator data is not valid.")
-              continue
+          # 종목별로 데이터 분리 및 분석
+          for stock_ticker in batch_tickers:
+            try:
+              stock_data = df[
+                df.index.get_level_values(0) == stock_ticker].copy()
 
-            analyzed_count += 1
+              if stock_data.empty:
+                logger.warning(f"No data available for {stock_ticker}.")
+                continue
 
-            # 신호 생성
-            buy_signals, sell_signals = generate_signals(
-              stock_data['Williams %R'], stock_data['RSI']
-            )
+              # 인덱스 정리
+              stock_data.reset_index(inplace=True)
+              stock_data.set_index('date', inplace=True)
 
-            latest_date = stock_data.index[-1]
-            williams_r_value = stock_data.loc[latest_date, 'Williams %R']
-            rsi_value = stock_data.loc[latest_date, 'RSI']
-            close_price = stock_data.loc[latest_date, 'close']
+              # 지표 계산
+              stock_data['Williams %R'] = calculate_williams_r(stock_data,
+                                                               period)
+              stock_data['RSI'] = calculate_rsi(stock_data, period)
 
-            # 매수 알림 - 시장 상태 표시 추가
-            if buy_signals.iloc[-1] and last_alert.get(stock_ticker) != 'buy':
-              message = (
-                f"🟢 [BUY SIGNAL] {stock_ticker} ({market_status})\n"
-                f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
-                f"📊 Williams %R: {williams_r_value:.2f}\n"
-                f"📊 RSI: {rsi_value:.2f}\n"
-                f"💰 Price: ${close_price:.2f}"
+              # 데이터 유효성 확인
+              if stock_data[['Williams %R', 'RSI']].isna().all(axis=None):
+                logger.warning(f"{stock_ticker}: Indicator data is not valid.")
+                continue
+
+              analyzed_count += 1
+
+              # 신호 생성
+              buy_signals, sell_signals = generate_signals(
+                  stock_data['Williams %R'], stock_data['RSI']
               )
-              await send_telegram_message(message)
-              logger.info(f"BUY signal sent for {stock_ticker} during {market_status}")
-              last_alert[stock_ticker] = 'buy'
-              signal_count += 1
 
-            # 매도 알림 - 시장 상태 표시 추가
-            if sell_signals.iloc[-1] and last_alert.get(stock_ticker) != 'sell':
-              message = (
-                f"🔴 [SELL SIGNAL] {stock_ticker} ({market_status})\n"
-                f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
-                f"📊 Williams %R: {williams_r_value:.2f}\n"
-                f"📊 RSI: {rsi_value:.2f}\n"
-                f"💰 Price: ${close_price:.2f}"
-              )
-              await send_telegram_message(message)
-              logger.info(f"SELL signal sent for {stock_ticker} during {market_status}")
-              last_alert[stock_ticker] = 'sell'
-              signal_count += 1
+              latest_date = stock_data.index[-1]
+              williams_r_value = stock_data.loc[latest_date, 'Williams %R']
+              rsi_value = stock_data.loc[latest_date, 'RSI']
+              close_price = stock_data.loc[latest_date, 'close']
 
-          except Exception as e:
-            logger.error(f"Error processing {stock_ticker}: {e}")
+              # 매수 알림 - 시장 상태 표시 추가
+              if buy_signals.iloc[-1] and last_alert.get(stock_ticker) != 'buy':
+                message = (
+                  f"🟢 [BUY SIGNAL] {stock_ticker} ({market_status})\n"
+                  f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
+                  f"📊 Williams %R: {williams_r_value:.2f}\n"
+                  f"📊 RSI: {rsi_value:.2f}\n"
+                  f"💰 Price: ${close_price:.2f}"
+                )
+                await send_telegram_message(message)
+                logger.info(
+                  f"BUY signal sent for {stock_ticker} during {market_status}")
+                last_alert[stock_ticker] = 'buy'
+                signal_count += 1
+
+              # 매도 알림 - 시장 상태 표시 추가
+              if sell_signals.iloc[-1] and last_alert.get(
+                  stock_ticker) != 'sell':
+                message = (
+                  f"🔴 [SELL SIGNAL] {stock_ticker} ({market_status})\n"
+                  f"📅 Date: {latest_date.strftime('%Y-%m-%d')}\n"
+                  f"📊 Williams %R: {williams_r_value:.2f}\n"
+                  f"📊 RSI: {rsi_value:.2f}\n"
+                  f"💰 Price: ${close_price:.2f}"
+                )
+                await send_telegram_message(message)
+                logger.info(
+                  f"SELL signal sent for {stock_ticker} during {market_status}")
+                last_alert[stock_ticker] = 'sell'
+                signal_count += 1
+
+            except Exception as e:
+              logger.error(f"Error processing {stock_ticker}: {e}")
+
+          # 다음 배치 전에 대기 (마지막 배치가 아닌 경우)
+          if batch_idx + batch_size < len(tickers):
+            logger.info(f"Waiting {batch_delay} seconds before next batch...")
+            await asyncio.sleep(batch_delay)
 
         # 분석 완료 로그
         logger.info(
-          f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
+            f"Analysis completed: {analyzed_count}/{len(tickers)} stocks analyzed, {signal_count} signals generated")
         logger.info(f"Stock analysis completed for cycle #{cycle_counter}")
 
       else:
@@ -289,17 +358,18 @@ async def monitor_stocks():
             f"{emoji} Heartbeat #{heartbeat_counter}: {market_status}\n"
             f"⏱️ Cycles: {cycle_counter} (every 30min)\n"
             f"📊 Monitoring: {len(tickers)} tickers\n"
-            f"✓ Analyzed: {analyzed_count if 'analyzed_count' in locals() else 0}/{len(tickers)} stocks\n"
+            f"✔ Analyzed: {analyzed_count if 'analyzed_count' in locals() else 0}/{len(tickers)} stocks\n"
             f"🎯 Signals: {signal_count if 'signal_count' in locals() else 0} generated\n"
             f"{time_info}"
           )
           await send_telegram_message(enhanced_heartbeat)
-          logger.info(f"Enhanced heartbeat #{heartbeat_counter} sent - Status: {market_status}")
+          logger.info(
+            f"Enhanced heartbeat #{heartbeat_counter} sent - Status: {market_status}")
         else:
           await send_heartbeat(heartbeat_counter, market_status)
       else:
         logger.info(
-          f"Heartbeat skipped (next heartbeat in {(heartbeat_interval * 2) - (cycle_counter % (heartbeat_interval * 2))} cycles)")
+            f"Heartbeat skipped (next heartbeat in {(heartbeat_interval * 2) - (cycle_counter % (heartbeat_interval * 2))} cycles)")
 
     except Exception as e:
       logger.error(f"Error in main loop: {e}")
@@ -310,8 +380,11 @@ async def monitor_stocks():
         pass
 
     # 30분 대기
-    next_check_time = (datetime.now() + timedelta(seconds=check_interval)).strftime('%H:%M:%S')
-    logger.info(f"Waiting 30 minutes until next check... (Next check: {next_check_time})")
+    next_check_time = (
+          datetime.now() + timedelta(seconds=check_interval)).strftime(
+      '%H:%M:%S')
+    logger.info(
+      f"Waiting 30 minutes until next check... (Next check: {next_check_time})")
     await asyncio.sleep(check_interval)
 
 
