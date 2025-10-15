@@ -1,6 +1,68 @@
 [![GoDoc](https://img.shields.io/badge/python-v3.12.4-lightblue)](https://www.python.org/)
 [![GoDoc](https://img.shields.io/badge/yfinance-v0.2.51-green)](https://pypi.org/project/yfinance/)
 
+---
+텔레그램 명령어를 통해 동적으로 티커를 추가/삭제할 수 있도록 수정
+
+## 🔥 주요 변경사항
+
+### 1. **동적 티커 관리**
+- 티커 리스트가 `tickers.json` 파일에 저장되어 재시작 후에도 유지됩니다
+- 런타임에 추가/삭제가 가능합니다
+
+### 2. **텔레그램 명령어**
+- `/add TICKER` - 티커 추가 (예: `/add TSLA`)
+- `/remove TICKER` - 티커 삭제 (예: `/remove TSLA`)
+- `/list` - 현재 모니터링 중인 모든 티커 표시
+- `/reset` - 기본 티커 리스트로 초기화
+- `/help` - 도움말 표시
+
+### 3. **티커 유효성 검증**
+- 티커 추가 시 실제 데이터가 있는지 자동으로 검증합니다
+
+### 4. **병렬 실행**
+- 주식 모니터링과 텔레그램 봇이 동시에 실행됩니다
+
+## 📝 설치 및 설정
+
+### 1. 필요한 패키지 설치
+```bash
+pip install python-telegram-bot
+```
+
+### 2. 환경 변수 설정
+```bash
+# .env 파일 또는 시스템 환경 변수에 추가
+export TELEGRAM_BOT_TOKEN="your_bot_token_here"
+```
+
+### 3. 텔레그램 봇 생성
+1. 텔레그램에서 @BotFather 검색
+2. `/newbot` 명령어로 새 봇 생성
+3. 받은 토큰을 `TELEGRAM_BOT_TOKEN`에 설정
+
+## 💡 사용 예시
+
+```
+사용자: /add COIN
+봇: ✅ COIN added to monitoring list
+    📊 Total tickers: 51
+
+사용자: /remove BABA
+봇: ✅ BABA removed from monitoring list
+    📊 Total tickers: 50
+
+사용자: /list
+봇: 📊 Monitoring 50 tickers:
+    1. NVDA
+    2. MSFT
+    ...
+```
+
+
+---
+
+
 
 
 # 소개
