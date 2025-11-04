@@ -231,16 +231,103 @@ def backtest_strategy(tickers, start_date, end_date, initial_cash=1000,
 # 실행
 if __name__ == "__main__":
   tickers = [
-    'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
-    'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',   # 6-10위
-    'JPM', 'WMT', 'LLY', 'ORCL', 'V',         # 11-15위
-    'NFLX', 'MA', 'XOM', 'COST', 'JNJ',       # 16-20위
-    'HD', 'PG', 'SAP', 'PLTR', 'BAC',         # 21-25위
-    'ABBV', 'ASML', 'NVO', 'KO', 'GE',        # 26-30위
-    'PM', 'CSCO', 'UNH', 'BABA', 'CVX',       # 31-35위
-    'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',       # 36-40위
-    'NVS', 'ABT', 'MS', 'TM', 'AZN',          # 41-45위
-    'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'        # 46-50위
+    # 'NVDA', 'MSFT', 'AAPL', 'AMZN', 'GOOGL',  # 1-5위
+    # 'META', 'AVGO', 'BRK.B', 'TSLA', 'TSM',   # 6-10위
+    # 'JPM', 'WMT', 'LLY', 'ORCL', 'V',         # 11-15위
+    # 'NFLX', 'MA', 'XOM', 'COST', 'JNJ',       # 16-20위
+    # 'HD', 'PG', 'SAP', 'PLTR', 'BAC',         # 21-25위
+    # 'ABBV', 'ASML', 'NVO', 'KO', 'GE',        # 26-30위
+    # 'PM', 'CSCO', 'UNH', 'BABA', 'CVX',       # 31-35위
+    # 'IBM', 'TMUS', 'WFC', 'AMD', 'CRM',       # 36-40위
+    # 'NVS', 'ABT', 'MS', 'TM', 'AZN',          # 41-45위
+    # 'AXP', 'LIN', 'HSBC', 'MCD', 'DIS'        # 46-50위
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "NVDA",
+    "AMD",
+    "AVGO",
+    "TSLA",
+    "NFLX",
+    "CRM",
+    "ADBE",
+    "PLTR",
+    "SNOW",
+    "CRWD",
+    "NET",
+    "DDOG",
+    "ZS",
+    "COIN",
+    "SQ",
+    "PYPL",
+    "SHOP",
+    "TSM",
+    "JPM",
+    "WMT",
+    "LLY",
+    "ORCL",
+    "V",
+    "MA",
+    "XOM",
+    "COST",
+    "JNJ",
+    "HD",
+    "PG",
+    "SAP",
+    "BAC",
+    "ABBV",
+    "ASML",
+    "NVO",
+    "KO",
+    "GE",
+    "PM",
+    "CSCO",
+    "UNH",
+    "BABA",
+    "CVX",
+    "IBM",
+    "TMUS",
+    "WFC",
+    "NVS",
+    "ABT",
+    "MS",
+    "TM",
+    "AZN",
+    "AXP",
+    "LIN",
+    "HSBC",
+    "MCD",
+    "DIS",
+    "HOOD",
+    "UMC",
+    "BMNR",
+    "CRCL",
+    "RDDT",
+    "QUBT",
+    "WBTN",
+    "CRWV",
+    "VRT",
+    "LMT",
+    "BLK",
+    "RBLX",
+    "FIG",
+    "SMR",
+    "CPNG",
+    "CRSP",
+    "SOUN",
+    "TLN",
+    "SERV",
+    "RZLV",
+    "TTWO",
+    "RKLB",
+    "ASTS",
+    "IREN",
+    "RGTI",
+    "MP",
+    "CLS",
+    "MELI"
   ]
 
   start_date = "2023-01-01"
